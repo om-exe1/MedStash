@@ -1,31 +1,27 @@
 # MedStash 💊
 
-> Real-time medicine availability tracker, pharmacy locator, and inventory management system.
+> Neighborhood Medicine & Pharmacy Finder — Search neighborhood pharmacy medicine stock availability, compare prices, and reserve online.
 
-MedStash connects patients with nearby pharmacies to find essential medicines, check real-time stock levels, compare prices, and place hold/reservation requests. It also provides pharmacy owners with an intuitive dashboard to manage inventory, track expiring batches, and process patient reservations.
+🔗 **Live Demo**: [https://medstash-five.vercel.app](https://medstash-five.vercel.app)
 
 ---
 
-## ✨ Features
+## 📌 Features
 
-- 🔍 **Smart Medicine Search**: Search by brand name, generic formulation, dosage, or therapeutic category.
-- 📍 **Interactive Pharmacy Map**: Locate nearby partner pharmacies with live inventory indicators and distance calculations.
-- 📦 **Real-time Stock & Reservation**: Check availability, request hold reservations, and get instant confirmation codes.
-- 📊 **Pharmacy Owner Portal**:
-  - Comprehensive inventory management (add/edit stock, batch tracking, expiry monitoring).
-  - Reservation request fulfillment and approval workflows.
-  - Analytics on stock levels and top searched medications.
-- 🎨 **Modern Responsive UI**: Built with React, Tailwind CSS, Lucide icons, and Framer Motion for smooth micro-interactions.
+- **Medicine Availability Search**: Real-time stock status across nearby pharmacies.
+- **Price Comparison**: Compare medicine pricing across local drugstores to find the best deal.
+- **Interactive Map**: View pharmacy locations and distances.
+- **Online Reservation**: Reserve medicine for pickup at nearby stores.
+- **Modern Responsive UI**: Built with React, Tailwind CSS, Lucide Icons, and Motion animations.
 
 ---
 
 ## 🛠️ Tech Stack
 
-- **Frontend**: React 18, TypeScript, Vite
-- **Styling**: Tailwind CSS, PostCSS, Lucide Icons
-- **Animation**: Motion (Framer Motion)
-- **Routing**: React Router v6
-- **Maps**: Mapbox GL
+- **Frontend**: React 18, TypeScript, Tailwind CSS, Lucide React, Framer Motion
+- **Routing**: React Router DOM v6
+- **Build Tool**: Vite
+- **Deployment**: Vercel
 
 ---
 
@@ -33,14 +29,13 @@ MedStash connects patients with nearby pharmacies to find essential medicines, c
 
 ### Prerequisites
 
-- Node.js (v18 or higher recommended)
-- npm or yarn
+Ensure you have Node.js installed (v18+ recommended).
 
 ### Installation
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/<your-username>/MedStash.git
+   git clone https://github.com/8-bitsoul/MedStash.git
    cd MedStash
    ```
 
@@ -61,6 +56,9 @@ MedStash connects patients with nearby pharmacies to find essential medicines, c
 
 ---
 
-## 📄 License
+## 📁 Project Documentation
 
-This project is licensed under the MIT License.
+Project reports, synopsis, and presentations are available in the [`docs/`](./docs) folder:
+- **Final Report / Synopsis**: `MedStash_Final_fixed-1.pdf` & `MedStash_14_Page_Synopsis.pdf`
+- **Synopsis Document**: `MedStash_Final_Synopsis.docx` & `MedStash_Synopsis_Report.docx`
+- **Presentation Slides**: `MedStash_ppt.pptx`
