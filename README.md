@@ -2,7 +2,7 @@
 
 > Neighborhood Medicine & Pharmacy Finder — Search neighborhood pharmacy medicine stock availability, compare prices, and reserve online.
 
-🔗 **Live Demo**: [https://medstash-five.vercel.app](https://medstash-five.vercel.app)
+🔗 **Live Demo**: 
 
 ---
 
