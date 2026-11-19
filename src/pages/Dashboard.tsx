@@ -17,11 +17,11 @@ import {
   X
 } from "lucide-react";
 import { useApp, Reservation } from "../context/AppContext";
-import { medicines } from "../data/mockData";
 
 export const Dashboard: React.FC = () => {
   const {
     currentUser,
+    medicines,
     pharmacies,
     reservations,
     cancelReservation,

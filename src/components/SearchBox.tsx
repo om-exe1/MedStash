@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Search as SearchIcon, X, Pill } from "lucide-react";
-import { medicines } from "../data/mockData";
+import { useApp } from "../context/AppContext";
 
 interface SearchBoxProps {
   large?: boolean;
@@ -19,6 +19,7 @@ export const SearchBox: React.FC<SearchBoxProps> = ({
   const [query, setQuery] = useState(defaultValue);
   const [isOpen, setIsOpen] = useState(false);
   const navigate = useNavigate();
+  const { medicines } = useApp();
   const wrapperRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

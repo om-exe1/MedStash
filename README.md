@@ -19,9 +19,12 @@
 ## 🛠️ Tech Stack
 
 - **Frontend**: React 18, TypeScript, Tailwind CSS, Lucide React, Framer Motion
+- **Backend**: Python 3, FastAPI, SQLAlchemy, Uvicorn
+- **Database**: SQLite (`medstash.db`)
+- **API Docs**: Swagger UI (`/docs`) & ReDoc (`/redoc`)
 - **Routing**: React Router DOM v6
 - **Build Tool**: Vite
-- **Deployment**: Vercel
+- **Deployment**: Vercel (Frontend), Python ASGI (Backend)
 
 ---
 
@@ -29,25 +32,28 @@
 
 ### Prerequisites
 
-Ensure you have Node.js installed (v18+ recommended).
+- Node.js (v18+ recommended)
+- Python (3.10+ recommended)
 
-### Installation
+### 1. Start the Backend API
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/8-bitsoul/MedStash.git
-   cd MedStash
-   ```
+In a terminal, run:
+```bash
+# Double click start_backend.bat on Windows, or run:
+cd backend
+python run.py
+```
+- API will run at: `http://127.0.0.1:8000`
+- Interactive Swagger Documentation: `http://127.0.0.1:8000/docs`
 
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
+### 2. Start the Frontend
 
-3. Start the development server:
-   ```bash
-   npm run dev
-   ```
+In another terminal, run:
+```bash
+npm install
+npm run dev
+```
+Open `http://localhost:5173` in your browser. Frontend API requests will automatically proxy to the FastAPI backend!
 
 4. Build for production:
    ```bash

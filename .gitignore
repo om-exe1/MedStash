@@ -34,3 +34,12 @@ dist-ssr
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts
+
+# Python backend
+__pycache__/
+*.py[cod]
+*$py.class
+backend/.venv/
+backend/medstash.db
+backend/medstash.db-journal
+.pytest_cache/

@@ -10,21 +10,32 @@ import {
   Heart,
   Search,
   Sparkles,
-  CheckCircle2
+  CheckCircle2,
+  LocateFixed
 } from "lucide-react";
 import { SearchBox } from "../components/SearchBox";
-import { medicines, pharmacies } from "../data/mockData";
 import { useApp } from "../context/AppContext";
 
 export const Home: React.FC = () => {
   const navigate = useNavigate();
-  const { isMedicineSaved, toggleSaveMedicine } = useApp();
+  const {
+    medicines,
+    pharmacies,
+    isMedicineSaved,
+    toggleSaveMedicine,
+    locationName,
+    isLocating,
+    detectLiveLocation
+  } = useApp();
 
   const categories = [
+    { name: "Rare & Orphan", count: 17, color: "bg-rose-50 text-rose-700 border-rose-200" },
     { name: "Pain relief", count: 18, color: "bg-amber-50 text-amber-700 border-amber-200" },
     { name: "Antibiotic", count: 14, color: "bg-indigo-50 text-indigo-700 border-indigo-200" },
     { name: "Allergy", count: 12, color: "bg-purple-50 text-purple-700 border-purple-200" },
-    { name: "Cold & flu", count: 24, color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+    { name: "Cardiac", count: 16, color: "bg-red-50 text-red-700 border-red-200" },
+    { name: "Diabetes", count: 10, color: "bg-teal-50 text-teal-700 border-teal-200" },
+    { name: "Oncology", count: 8, color: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200" },
     { name: "Digestive", count: 16, color: "bg-blue-50 text-blue-700 border-blue-200" },
   ];
 
@@ -57,10 +68,19 @@ export const Home: React.FC = () => {
 
             {/* Location & Map shortcut */}
             <div className="flex items-center gap-3 text-xs text-gray-500 pt-1 flex-wrap">
-              <div className="flex items-center gap-1.5 font-medium text-gray-700">
-                <MapPin size={14} className="text-teal-600 shrink-0" />
-                <span>Indiranagar, Bengaluru</span>
-              </div>
+              <button
+                type="button"
+                onClick={() => detectLiveLocation(true)}
+                disabled={isLocating}
+                className="flex items-center gap-1.5 font-medium text-gray-700 hover:text-teal-700 bg-gray-50 hover:bg-teal-50 px-2.5 py-1 rounded-md border border-gray-200 transition-colors shadow-2xs group"
+                title="Click to re-detect your live location via GPS"
+              >
+                <LocateFixed size={14} className={`text-teal-600 shrink-0 ${isLocating ? "animate-spin text-teal-700" : "group-hover:scale-110 transition-transform"}`} />
+                <span>{isLocating ? "Detecting location..." : locationName}</span>
+                <span className="text-[10px] text-teal-700 bg-teal-100/80 px-1.5 py-0.5 rounded font-semibold ml-0.5">
+                  {isLocating ? "Locating..." : "Live"}
+                </span>
+              </button>
               <span className="text-gray-300">|</span>
               <button
                 type="button"
@@ -257,7 +277,7 @@ export const Home: React.FC = () => {
             Simple Workflow
           </span>
           <h2 className="text-2xl font-bold text-gray-900">
-            How MedStack Works
+            How MedStash Works
           </h2>
           <p className="text-xs sm:text-sm text-gray-500">
             A 3-step solution to eliminate the frustration of visiting multiple chemist shops when sick.
@@ -328,7 +348,7 @@ export const Home: React.FC = () => {
       <div className="bg-gray-100 border border-gray-200 rounded-xl p-4 flex items-start gap-3 text-xs text-gray-600">
         <ShieldCheck size={18} className="text-teal-700 shrink-0 mt-0.5" />
         <div>
-          <strong className="text-gray-900">Project Disclaimer:</strong> MedStack is an academic software prototype developed for pharmacy stock discovery. It does not sell pharmaceuticals directly. Prescription medications (Rx) strictly require presenting a valid registered medical prescription at the pharmacy counter.
+          <strong className="text-gray-900">Project Disclaimer:</strong> MedStash is an academic software prototype developed for pharmacy stock discovery. It does not sell pharmaceuticals directly. Prescription medications (Rx) strictly require presenting a valid registered medical prescription at the pharmacy counter.
         </div>
       </div>
     </main>

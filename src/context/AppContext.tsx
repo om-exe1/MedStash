@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { Medicine, Pharmacy, PharmacyStock, medicines, pharmacies as initialPharmacies, mockNotifications } from "../data/mockData";
+import { api } from "../services/api";
 
 export interface Reservation {
   id: string;
@@ -50,6 +51,17 @@ interface AppContextType {
   theme: "light" | "dark";
   toggleTheme: () => void;
   currentUser: UserProfile;
+  userLocation: { lat: number; lng: number };
+  locationName: string;
+  isLocating: boolean;
+  detectLiveLocation: (showToast?: boolean) => Promise<boolean>;
+  setUserCustomLocation: (coords: { lat: number; lng: number }, name: string) => void;
+  medicines: Medicine[];
+  loadingMedicines: boolean;
+  backendConnected: boolean;
+  refreshData: () => Promise<void>;
+  addMedicine: (data: Partial<Medicine>) => Promise<Medicine>;
+  verifyCode: (code: string) => Promise<Reservation | null>;
   pharmacies: Pharmacy[];
   reservations: Reservation[];
   savedMedicineIds: string[];
@@ -217,6 +229,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [reservationModalTarget, setReservationModalTarget] = useState<{ medicine: Medicine; pharmacy: Pharmacy } | null>(null);
 
+  // User Live Location & Geocoding State
+  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number }>(() => {
+    try {
+      const stored = localStorage.getItem("medstash_user_coords");
+      if (stored) return JSON.parse(stored);
+    } catch {}
+    return { lat: 12.9716, lng: 77.5946 }; // Default fallback
+  });
+
+  const [locationName, setLocationName] = useState<string>(() => {
+    try {
+      const stored = localStorage.getItem("medstash_location_name");
+      if (stored) return stored;
+    } catch {}
+    return "Detecting live location...";
+  });
+
+  const [isLocating, setIsLocating] = useState<boolean>(false);
+
+  const [medicinesList, setMedicinesList] = useState<Medicine[]>(() => {
+    try {
+      const stored = localStorage.getItem("medstash_medicines_v2");
+      return stored ? JSON.parse(stored) : medicines;
+    } catch {
+      return medicines;
+    }
+  });
+  const [loadingMedicines, setLoadingMedicines] = useState<boolean>(false);
+  const [backendConnected, setBackendConnected] = useState<boolean>(false);
+
   useEffect(() => {
     localStorage.setItem("medstash_current_user", JSON.stringify(currentUser));
   }, [currentUser]);
@@ -232,6 +274,166 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     localStorage.setItem("medstash_saved_medicines", JSON.stringify(savedMedicineIds));
   }, [savedMedicineIds]);
+
+  const refreshData = async () => {
+    try {
+      const health = await api.checkHealth();
+      if (health.status === "online") {
+        setBackendConnected(true);
+      }
+    } catch {
+      setBackendConnected(false);
+    }
+
+    try {
+      setLoadingMedicines(true);
+      const meds = await api.getMedicines();
+      if (meds && meds.length > 0) {
+        setMedicinesList(meds);
+        localStorage.setItem("medstash_medicines_v2", JSON.stringify(meds));
+      }
+    } catch (e) {
+      console.warn("Could not load medicines from backend, using cached/mock", e);
+    } finally {
+      setLoadingMedicines(false);
+    }
+
+    try {
+      const pharms = await api.getPharmacies();
+      if (pharms && pharms.length > 0) {
+        setPharmacies(pharms);
+      }
+    } catch {}
+
+    try {
+      const res = await api.getReservations();
+      if (res && res.length > 0) {
+        setReservations(res);
+      }
+    } catch {}
+
+    try {
+      const notifs = await api.getNotifications();
+      if (notifs && notifs.length > 0) {
+        setNotifications(notifs);
+      }
+    } catch {}
+  };
+
+  // Initial sync with backend API and auto-detect location
+  useEffect(() => {
+    refreshData();
+    detectLiveLocation(false);
+  }, []);
+
+  const detectLiveLocation = async (showToast = true): Promise<boolean> => {
+    setIsLocating(true);
+
+    const reverseGeocode = async (lat: number, lng: number): Promise<string> => {
+      try {
+        const res = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=14`
+        );
+        if (res.ok) {
+          const data = await res.json();
+          const addr = data.address || {};
+          const suburb = addr.suburb || addr.neighbourhood || addr.subdivision || addr.residential || addr.quarter || "";
+          const city = addr.city || addr.town || addr.village || addr.county || addr.state_district || "";
+          if (suburb && city) return `${suburb}, ${city}`;
+          if (city) return `${city}, ${addr.state || ""}`.replace(/,\s*$/, "");
+          if (data.display_name) return data.display_name.split(",").slice(0, 2).join(",");
+        }
+      } catch {}
+      return `GPS (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+    };
+
+    const applyLocation = async (lat: number, lng: number, name: string) => {
+      setUserLocation({ lat, lng });
+      setLocationName(name);
+      try {
+        localStorage.setItem("medstash_user_coords", JSON.stringify({ lat, lng }));
+        localStorage.setItem("medstash_location_name", name);
+      } catch {}
+
+      // Fetch live nearby pharmacies around this user's real coordinate
+      try {
+        const pharms = await api.getNearbyPharmacies(lat, lng, 5.0);
+        if (pharms && pharms.length > 0) {
+          setPharmacies(pharms);
+        }
+      } catch (err) {
+        console.warn("Could not load pharmacies at detected location", err);
+      }
+    };
+
+    // 1. Try Browser GPS first
+    if (typeof navigator !== "undefined" && navigator.geolocation) {
+      try {
+        const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            enableHighAccuracy: true,
+            timeout: 9000,
+            maximumAge: 60000,
+          });
+        });
+
+        const lat = position.coords.latitude;
+        const lng = position.coords.longitude;
+        const name = await reverseGeocode(lat, lng);
+        await applyLocation(lat, lng, name);
+        setIsLocating(false);
+        if (showToast) {
+          addToast("Live Location Found", `Detected: ${name}. Updated nearby pharmacy stores!`, "success");
+        }
+        return true;
+      } catch (gpsError) {
+        console.info("GPS prompt dismissed/timed out, attempting IP location fallback...", gpsError);
+      }
+    }
+
+    // 2. IP-based location fallback if GPS is blocked or timed out
+    try {
+      const ipRes = await fetch("https://get.geojs.io/v1/ip/geo.json");
+      if (ipRes.ok) {
+        const ipData = await ipRes.json();
+        const lat = parseFloat(ipData.latitude);
+        const lng = parseFloat(ipData.longitude);
+        if (!isNaN(lat) && !isNaN(lng)) {
+          const parts = [ipData.city, ipData.region, ipData.country].filter(Boolean);
+          const name = parts.slice(0, 2).join(", ") || "Detected Region";
+          await applyLocation(lat, lng, name);
+          setIsLocating(false);
+          if (showToast) {
+            addToast("Location Detected", `Set to ${name} via network.`, "info");
+          }
+          return true;
+        }
+      }
+    } catch (ipError) {
+      console.warn("IP geolocation fallback also failed", ipError);
+    }
+
+    setIsLocating(false);
+    if (showToast) {
+      addToast("Location Not Available", "Could not detect GPS. You can choose your area on the Pharmacy Map.", "info");
+    }
+    return false;
+  };
+
+  const setUserCustomLocation = async (coords: { lat: number; lng: number }, name: string) => {
+    setUserLocation(coords);
+    setLocationName(name);
+    try {
+      localStorage.setItem("medstash_user_coords", JSON.stringify(coords));
+      localStorage.setItem("medstash_location_name", name);
+    } catch {}
+    try {
+      const pharms = await api.getNearbyPharmacies(coords.lat, coords.lng, 5.0);
+      if (pharms && pharms.length > 0) {
+        setPharmacies(pharms);
+      }
+    } catch {}
+  };
 
   const addToast = (title: string, message: string, type: "success" | "info" | "error" = "success") => {
     const id = "toast-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4);
@@ -333,6 +535,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       "success"
     );
     closeReservationModal();
+
+    // Async sync with backend
+    api.createReservation({
+      medicineId: medicine.id,
+      medicineName: medicine.name,
+      medicineStrength: medicine.strength,
+      pharmacyId: pharmacy.id,
+      pharmacyName: pharmacy.name,
+      pharmacyAddress: pharmacy.address,
+      pharmacyPhone: pharmacy.phone,
+      unitPrice,
+      quantity,
+      totalPrice: unitPrice * quantity,
+      patientName: patientName || currentUser.name || "Om",
+      patientPhone: patientPhone || "+91 98765 43210",
+      timeSlot,
+    }).catch(() => {});
+
     return newReservation;
   };
 
@@ -340,6 +560,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setReservations((prev) =>
       prev.map((r) => (r.id === id ? { ...r, status: "Cancelled" as const } : r))
     );
+    api.updateReservationStatus(id, "Cancelled").catch(() => {});
     addToast("Reservation Cancelled", "The reservation hold has been released.", "info");
   };
 
@@ -351,6 +572,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setReservations((prev) =>
       prev.map((r) => (r.id === id ? { ...r, status: "Picked Up" as const } : r))
     );
+    api.updateReservationStatus(id, "Picked Up").catch(() => {});
 
     // Decrement pharmacy inventory stock
     setPharmacies((prev) =>
@@ -416,6 +638,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     const med = medicines.find((m) => m.id === medicineId);
+    api.updateStock(pharmacyId, medicineId, updates).catch(() => {});
     addToast(
       "Stock Updated",
       `${med?.name || "Medicine"} updated to ${updates.status || "new quantity/price"}.`,
@@ -445,6 +668,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     const med = medicines.find((m) => m.id === medicineId);
+    api.updateStock(pharmacyId, medicineId, {
+      status: stock.status,
+      quantity: stock.quantity,
+      price: stock.price,
+      lastUpdated: "Just now"
+    }).catch(() => {});
     addToast(
       "Medicine Added to Store",
       `${med?.name || "Medicine"} added to your pharmacy stock catalog.`,
@@ -467,6 +696,46 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const isMedicineSaved = (medicineId: string) => savedMedicineIds.includes(medicineId);
 
+  const addMedicine = async (data: Partial<Medicine>): Promise<Medicine> => {
+    try {
+      const created = await api.createMedicine(data);
+      setMedicinesList((prev) => [created, ...prev]);
+      addToast("Medicine Added", `${created.name} was added to the live catalog.`, "success");
+      return created;
+    } catch {
+      const fallback: Medicine = {
+        id: (data.name || "new-med").toLowerCase().replace(/\s+/g, "-"),
+        name: data.name || "Unknown Medicine",
+        generic: data.generic || "Generic Name",
+        form: data.form || "Tablet",
+        strength: data.strength || "500 mg",
+        category: (data.category as any) || "Pain relief",
+        prescriptionRequired: !!data.prescriptionRequired,
+        basePrice: data.basePrice || 30,
+        description: data.description || "Medication details",
+        uses: data.uses || ["General therapeutic use"],
+        dosage: data.dosage || "As prescribed",
+        sideEffects: data.sideEffects || [],
+        storage: data.storage || "Store below 25°C",
+        popular: false
+      };
+      setMedicinesList((prev) => [fallback, ...prev]);
+      addToast("Medicine Added", `${fallback.name} added to catalog.`, "info");
+      return fallback;
+    }
+  };
+
+  const verifyCode = async (code: string): Promise<Reservation | null> => {
+    try {
+      const result = await api.verifyReservationCode(code);
+      return result;
+    } catch {
+      const clean = code.trim().toLowerCase();
+      const local = reservations.find((r) => r.code.toLowerCase().includes(clean) || r.id.toLowerCase().includes(clean));
+      return local || null;
+    }
+  };
+
   const markNotificationsAsRead = () => {
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
   };
@@ -479,6 +748,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         theme,
         toggleTheme,
         currentUser,
+        userLocation,
+        locationName,
+        isLocating,
+        detectLiveLocation,
+        setUserCustomLocation,
+        medicines: medicinesList,
+        loadingMedicines,
+        backendConnected,
+        refreshData,
+        addMedicine,
+        verifyCode,
         pharmacies,
         reservations,
         savedMedicineIds,

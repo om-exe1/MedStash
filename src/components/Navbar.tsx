@@ -16,7 +16,11 @@ export const Navbar: React.FC = () => {
   const {
     currentUser,
     logout,
-    reservations
+    reservations,
+    backendConnected,
+    locationName,
+    isLocating,
+    detectLiveLocation
   } = useApp();
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -48,7 +52,7 @@ export const Navbar: React.FC = () => {
           </div>
           <div className="flex flex-col">
             <span className="font-bold text-xl text-gray-900 tracking-tight leading-none">
-              Med<span className="text-teal-600">Stack</span>
+              Med<span className="text-teal-600">Stash</span>
             </span>
             <span className="text-[10px] text-gray-400 font-medium tracking-wide">
               Pharmacy & Medicine Finder
@@ -139,6 +143,18 @@ export const Navbar: React.FC = () => {
 
         {/* Right Action: User profile & Switch / Login button */}
         <div className="hidden md:flex items-center gap-3">
+          {/* Live Location Pill */}
+          <button
+            type="button"
+            onClick={() => detectLiveLocation(true)}
+            disabled={isLocating}
+            className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-gray-700 hover:text-teal-700 bg-gray-50 hover:bg-teal-50 border border-gray-200 rounded-lg transition-colors"
+            title="Your detected live location. Click to refresh via GPS."
+          >
+            <MapPin size={13} className={`text-teal-600 shrink-0 ${isLocating ? "animate-spin" : ""}`} />
+            <span className="max-w-[130px] truncate font-medium">{isLocating ? "Locating..." : locationName}</span>
+          </button>
+
           {/* User Role Tag */}
           <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-xs">
             {isChemist ? (
@@ -153,6 +169,19 @@ export const Navbar: React.FC = () => {
               ({isChemist ? "Chemist" : "Patient"})
             </span>
           </div>
+
+          {/* Live Backend Connection Indicator */}
+          {backendConnected ? (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200" title="FastAPI backend connected (http://127.0.0.1:8000)">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              API Connected
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200" title="Running in local fallback mode. Run start_backend.bat to activate FastAPI server">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+              Local Mode
+            </span>
+          )}
 
           <Link
             to="/login"

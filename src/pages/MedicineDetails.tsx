@@ -11,13 +11,12 @@ import {
   Pill,
   Info
 } from "lucide-react";
-import { medicines } from "../data/mockData";
 import { PharmacyCard } from "../components/PharmacyCard";
 import { useApp } from "../context/AppContext";
 
 export const MedicineDetails: React.FC = () => {
   const { id } = useParams<{ id: string }>();
-  const { pharmacies, isMedicineSaved, toggleSaveMedicine } = useApp();
+  const { medicines, pharmacies, isMedicineSaved, toggleSaveMedicine } = useApp();
 
   const [sortOption, setSortOption] = useState<"price" | "distance" | "rating">("price");
 

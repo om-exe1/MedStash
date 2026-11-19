@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 /* ==========================================================================
-   MedStack — Clean, Professional Styling for Student Viva & Presentation
+   MedStash — Clean, Professional Styling for Student Viva & Presentation
    Primary Color: Medical Teal (#0d9488)
    Typography: Inter / System Sans-serif
    ========================================================================== */
@@ -81,4 +81,14 @@
   .badge-otc {
     @apply inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200;
   }
+}
+
+/* Leaflet custom map markers */
+.leaflet-div-icon {
+  background: transparent !important;
+  border: none !important;
+}
+.custom-user-marker, .custom-store-marker {
+  background: transparent !important;
+  border: none !important;
 }

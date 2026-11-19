@@ -87,7 +87,7 @@ export const PharmacyCard: React.FC<PharmacyCardProps> = ({
 
         <div className="flex items-center gap-3 text-xs text-gray-500 flex-wrap">
           <span className="font-semibold text-teal-700 bg-teal-50 px-2 py-0.5 rounded">
-            {pharmacy.distanceText} away
+            {pharmacy.distanceText?.includes("away") ? pharmacy.distanceText : `${pharmacy.distanceText} away`}
           </span>
           <span className="inline-flex items-center gap-1">
             <Star size={12} className="text-amber-500 fill-amber-500" />

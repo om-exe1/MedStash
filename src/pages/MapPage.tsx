@@ -1,5 +1,7 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
 import {
   MapPin,
   ShieldCheck,
@@ -7,81 +9,354 @@ import {
   Clock,
   Phone,
   ArrowRight,
-  ZoomIn,
-  ZoomOut,
   LocateFixed,
-  ShoppingBag,
-  List
+  Navigation,
+  Search,
+  List,
+  RefreshCw,
+  SlidersHorizontal,
+  ExternalLink,
+  CheckCircle2,
+  AlertCircle,
+  ShoppingBag
 } from "lucide-react";
-import { medicines, Pharmacy } from "../data/mockData";
+import { Pharmacy, Medicine } from "../data/mockData";
 import { useApp } from "../context/AppContext";
+import { api } from "../services/api";
 
 export const MapPage: React.FC = () => {
-  const { pharmacies, openReservationModal } = useApp();
-  const [selectedPharmacy, setSelectedPharmacy] = useState<Pharmacy | null>(pharmacies[0]);
-  const [filterMode, setFilterMode] = useState<"all" | "open24" | "verified">("all");
-  const [zoomLevel, setZoomLevel] = useState<number>(1);
+  const {
+    medicines,
+    pharmacies: defaultPharmacies,
+    openReservationModal,
+    addToast,
+    userLocation,
+    locationName,
+    isLocating,
+    detectLiveLocation,
+    setUserCustomLocation
+  } = useApp();
 
-  const filteredPharmacies = pharmacies.filter((p) => {
+  // Map state
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapInstanceRef = useRef<L.Map | null>(null);
+  const markersLayerRef = useRef<L.LayerGroup | null>(null);
+  const userMarkerRef = useRef<L.Marker | null>(null);
+  const radiusCircleRef = useRef<L.Circle | null>(null);
+
+  const [isLoadingStores, setIsLoadingStores] = useState<boolean>(false);
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [searchRadius, setSearchRadius] = useState<number>(5.0);
+
+  // Stores & Selection
+  const [nearbyPharmacies, setNearbyPharmacies] = useState<Pharmacy[]>(defaultPharmacies);
+  const [selectedPharmacy, setSelectedPharmacy] = useState<Pharmacy | null>(defaultPharmacies[0] || null);
+  const [filterMode, setFilterMode] = useState<"all" | "open24" | "verified">("all");
+
+  // Keep stores in sync with AppContext nearby pharmacies
+  useEffect(() => {
+    if (defaultPharmacies && defaultPharmacies.length > 0) {
+      setNearbyPharmacies(defaultPharmacies);
+      if (!selectedPharmacy || !defaultPharmacies.some(p => p.id === selectedPharmacy.id)) {
+        setSelectedPharmacy(defaultPharmacies[0]);
+      }
+    }
+  }, [defaultPharmacies]);
+
+  // Selected medicine for price comparison on map markers
+  const [activeMedicineId, setActiveMedicineId] = useState<string>(medicines[0]?.id || "dolo-650");
+  const activeMedicine = medicines.find((m) => m.id === activeMedicineId) || medicines[0];
+
+  // 1. Initialize Leaflet Map
+  useEffect(() => {
+    if (!mapContainerRef.current) return;
+    if (mapInstanceRef.current) return;
+
+    const map = L.map(mapContainerRef.current, {
+      center: [userLocation.lat, userLocation.lng],
+      zoom: 14,
+      zoomControl: false,
+    });
+
+    // High quality OpenStreetMap tiles
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      maxZoom: 19,
+    }).addTo(map);
+
+    // Zoom control in bottom right
+    L.control.zoom({ position: "bottomright" }).addTo(map);
+
+    markersLayerRef.current = L.layerGroup().addTo(map);
+    mapInstanceRef.current = map;
+
+    // Fix map sizing after render
+    setTimeout(() => {
+      map.invalidateSize();
+    }, 200);
+
+    return () => {
+      map.remove();
+      mapInstanceRef.current = null;
+    };
+  }, []);
+
+  // 2. Fetch nearby pharmacies when location or radius changes
+  const fetchPharmaciesAtLocation = async (lat: number, lng: number, radius: number = searchRadius) => {
+    setIsLoadingStores(true);
+    try {
+      const data = await api.getNearbyPharmacies(lat, lng, radius);
+      if (data && data.length > 0) {
+        setNearbyPharmacies(data);
+        setSelectedPharmacy(data[0]);
+      } else {
+        // Fallback to default pharmacies with recalculated distances
+        setNearbyPharmacies(defaultPharmacies);
+        if (defaultPharmacies.length > 0) setSelectedPharmacy(defaultPharmacies[0]);
+      }
+    } catch (err) {
+      console.warn("Could not fetch Overpass pharmacies, using active catalog", err);
+      setNearbyPharmacies(defaultPharmacies);
+      if (defaultPharmacies.length > 0) setSelectedPharmacy(defaultPharmacies[0]);
+    } finally {
+      setIsLoadingStores(false);
+    }
+  };
+
+  // 3. User GPS Geolocation handler - triggers global live location tracking
+  const handleLocateMe = async () => {
+    await detectLiveLocation(true);
+  };
+
+  // Smoothly pan map when userLocation updates
+  useEffect(() => {
+    if (mapInstanceRef.current && userLocation.lat && userLocation.lng) {
+      mapInstanceRef.current.flyTo([userLocation.lat, userLocation.lng], 14, { duration: 1.2 });
+    }
+  }, [userLocation.lat, userLocation.lng]);
+
+  // 4. Search area by text (using OpenStreetMap Nominatim Geocoder)
+  const handleSearchAreaSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!searchQuery.trim()) return;
+
+    try {
+      setIsLoadingStores(true);
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery.trim())}&limit=1`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.length > 0) {
+          const targetLat = parseFloat(data[0].lat);
+          const targetLng = parseFloat(data[0].lon);
+          const friendlyName = data[0].display_name.split(",").slice(0, 2).join(",");
+          setUserCustomLocation({ lat: targetLat, lng: targetLng }, friendlyName);
+
+          if (mapInstanceRef.current) {
+            mapInstanceRef.current.flyTo([targetLat, targetLng], 14, { duration: 1.2 });
+          }
+
+          addToast("Area Located", `Showing pharmacies around ${data[0].display_name.split(",")[0]}.`, "success");
+        } else {
+          addToast("Area Not Found", "Could not locate that neighborhood. Try another city or locality.", "error");
+        }
+      }
+    } catch {
+      addToast("Search Error", "Could not connect to geocoding service.", "error");
+    } finally {
+      setIsLoadingStores(false);
+    }
+  };
+
+  // 5. Update Map Markers and User Location Pin
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    const markersLayer = markersLayerRef.current;
+    if (!map || !markersLayer) return;
+
+    markersLayer.clearLayers();
+
+    // User location pulsing marker
+    const userPulseIcon = L.divIcon({
+      className: "custom-user-marker",
+      html: `
+        <div class="relative flex items-center justify-center">
+          <div class="w-6 h-6 rounded-full bg-teal-500/30 animate-ping absolute"></div>
+          <div class="w-4 h-4 rounded-full bg-teal-600 border-2 border-white shadow-lg relative z-10"></div>
+          <span class="absolute top-5 bg-teal-900 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shadow whitespace-nowrap">You are here</span>
+        </div>
+      `,
+      iconSize: [24, 24],
+      iconAnchor: [12, 12],
+    });
+
+    if (userMarkerRef.current) {
+      userMarkerRef.current.setLatLng([userLocation.lat, userLocation.lng]);
+    } else {
+      userMarkerRef.current = L.marker([userLocation.lat, userLocation.lng], {
+        icon: userPulseIcon,
+        zIndexOffset: 1000,
+      }).addTo(markersLayer);
+    }
+
+    // Radius circle overlay
+    if (radiusCircleRef.current) {
+      radiusCircleRef.current.setLatLng([userLocation.lat, userLocation.lng]);
+      radiusCircleRef.current.setRadius(searchRadius * 1000);
+    } else {
+      radiusCircleRef.current = L.circle([userLocation.lat, userLocation.lng], {
+        radius: searchRadius * 1000,
+        color: "#0d9488",
+        fillColor: "#0d9488",
+        fillOpacity: 0.05,
+        weight: 1.5,
+        dashArray: "4, 6",
+      }).addTo(markersLayer);
+    }
+
+    // Filter pharmacies
+    const displayedPharmacies = nearbyPharmacies.filter((p) => {
+      if (filterMode === "open24") return p.openStatus.includes("24");
+      if (filterMode === "verified") return p.verified;
+      return true;
+    });
+
+    // Pharmacy markers
+    displayedPharmacies.forEach((pharmacy) => {
+      const pLat = pharmacy.lat || userLocation.lat + 0.005;
+      const pLng = pharmacy.lng || userLocation.lng + 0.005;
+      const isSelected = selectedPharmacy?.id === pharmacy.id;
+
+      // Price for active medicine
+      const price = pharmacy.inventory[activeMedicineId]?.price ?? activeMedicine?.basePrice ?? 35;
+      const stock = pharmacy.inventory[activeMedicineId]?.status || "Available";
+      const isOutOfStock = stock === "Out of stock";
+
+      const markerHtml = `
+        <div class="cursor-pointer transition-transform duration-200 transform hover:scale-110 flex flex-col items-center">
+          <div class="px-2 py-1 rounded-md text-xs font-bold shadow-lg border flex items-center gap-1 ${
+            isSelected
+              ? "bg-teal-600 text-white border-teal-700 ring-4 ring-teal-200"
+              : isOutOfStock
+              ? "bg-gray-100 text-gray-500 border-gray-300"
+              : "bg-white text-gray-900 border-teal-400 hover:bg-teal-50"
+          }">
+            <span>${isOutOfStock ? "Sold Out" : `₹${price}`}</span>
+          </div>
+          <span class="text-[10px] font-semibold text-gray-800 bg-white/95 px-1.5 py-0.5 rounded shadow-xs mt-0.5 max-w-[120px] truncate border border-gray-200">
+            ${pharmacy.name}
+          </span>
+        </div>
+      `;
+
+      const storeIcon = L.divIcon({
+        className: "custom-store-marker",
+        html: markerHtml,
+        iconSize: [80, 40],
+        iconAnchor: [40, 20],
+      });
+
+      const marker = L.marker([pLat, pLng], { icon: storeIcon, zIndexOffset: isSelected ? 500 : 100 })
+        .addTo(markersLayer)
+        .on("click", () => {
+          setSelectedPharmacy(pharmacy);
+          if (mapInstanceRef.current) {
+            mapInstanceRef.current.panTo([pLat, pLng]);
+          }
+        });
+    });
+  }, [userLocation, nearbyPharmacies, selectedPharmacy, filterMode, activeMedicineId, searchRadius]);
+
+  const handleReserve = (pharmacy: Pharmacy) => {
+    openReservationModal(activeMedicine, pharmacy);
+  };
+
+  const filteredPharmacies = nearbyPharmacies.filter((p) => {
     if (filterMode === "open24") return p.openStatus.includes("24");
     if (filterMode === "verified") return p.verified;
     return true;
   });
 
-  const handleRecenter = () => {
-    setSelectedPharmacy(pharmacies[0]);
-    setZoomLevel(1);
-  };
-
-  const handleReserve = (pharmacy: Pharmacy) => {
-    openReservationModal(medicines[0], pharmacy);
-  };
-
   return (
     <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
-        <div>
-          <span className="text-xs font-semibold text-teal-700 uppercase tracking-wider block">
-            Location Services
-          </span>
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
-            Interactive Pharmacy Map
+      {/* Top Banner & Location Controls */}
+      <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-teal-700 uppercase tracking-wider">
+              Live Location Services
+            </span>
+            <span className="inline-flex items-center gap-1 text-[11px] font-medium bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full border border-emerald-200">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              Real-Time Stock Radar
+            </span>
+          </div>
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-gray-900">
+            Neighborhood Pharmacy Map
           </h1>
-          <p className="text-xs sm:text-sm text-gray-500 mt-1">
-            Indiranagar, Bengaluru · Showing {filteredPharmacies.length} nearby partner chemists.
+          <p className="text-xs sm:text-sm text-gray-500 flex items-center gap-1.5">
+            <MapPin size={14} className="text-teal-600 shrink-0" />
+            <span>Currently focused on: <strong>{locationName}</strong></span>
+            {isLoadingStores && <RefreshCw size={13} className="animate-spin text-teal-600 ml-1" />}
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <Link to="/search" className="btn-outline btn-sm">
-            <List size={14} /> Switch to List View
-          </Link>
+        {/* GPS Locate Button & Search Form */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+          <form onSubmit={handleSearchAreaSubmit} className="relative flex items-center">
+            <input
+              type="text"
+              placeholder="Search area (e.g. Indiranagar, Mumbai)..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-8 pr-16 py-2 text-xs border border-gray-200 rounded-lg bg-gray-50 focus:bg-white focus:outline-teal-500 w-full sm:w-64"
+            />
+            <Search size={14} className="absolute left-2.5 text-gray-400" />
+            <button
+              type="submit"
+              className="absolute right-1 px-2 py-1 text-[11px] font-semibold bg-teal-600 text-white rounded hover:bg-teal-700"
+            >
+              Search
+            </button>
+          </form>
+
+          <button
+            type="button"
+            onClick={handleLocateMe}
+            disabled={isLocating}
+            className="btn-primary text-xs py-2 px-3 inline-flex items-center justify-center gap-1.5 font-semibold"
+            title="Detect GPS coordinates and search nearby stores"
+          >
+            <LocateFixed size={14} className={isLocating ? "animate-spin" : ""} />
+            {isLocating ? "Detecting GPS..." : "Locate My Position"}
+          </button>
         </div>
       </div>
 
-      {/* Filter Row */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-2">
+      {/* Control Bar: Filters & Medicine Selector */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white border border-gray-200 rounded-xl p-3 shadow-xs">
+        {/* Filter Badges */}
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             type="button"
             onClick={() => setFilterMode("all")}
             className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
               filterMode === "all"
-                ? "bg-teal-600 text-white font-semibold"
-                : "bg-white border border-gray-200 text-gray-700 hover:bg-gray-50"
+                ? "bg-teal-600 text-white font-semibold shadow-xs"
+                : "bg-gray-50 text-gray-700 hover:bg-gray-100"
             }`}
           >
-            All Stores ({pharmacies.length})
+            All Stores ({nearbyPharmacies.length})
           </button>
 
           <button
             type="button"
             onClick={() => setFilterMode("open24")}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1 ${
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors inline-flex items-center gap-1 ${
               filterMode === "open24"
-                ? "bg-teal-600 text-white font-semibold"
-                : "bg-white border border-gray-200 text-gray-700 hover:bg-gray-50"
+                ? "bg-teal-600 text-white font-semibold shadow-xs"
+                : "bg-gray-50 text-gray-700 hover:bg-gray-100"
             }`}
           >
             <Clock size={12} /> Open 24/7
@@ -90,212 +365,165 @@ export const MapPage: React.FC = () => {
           <button
             type="button"
             onClick={() => setFilterMode("verified")}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1 ${
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors inline-flex items-center gap-1 ${
               filterMode === "verified"
-                ? "bg-teal-600 text-white font-semibold"
-                : "bg-white border border-gray-200 text-gray-700 hover:bg-gray-50"
+                ? "bg-teal-600 text-white font-semibold shadow-xs"
+                : "bg-gray-50 text-gray-700 hover:bg-gray-100"
             }`}
           >
             <ShieldCheck size={12} /> Verified Stores
           </button>
         </div>
 
-        <div className="text-xs text-gray-400">
-          Radius: 3.0 km · Click on any pharmacy pin to view details
+        {/* Medicine Price Tracker & Radius Selector */}
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 text-xs text-gray-600">
+            <span>Tracking Pin Price:</span>
+            <select
+              value={activeMedicineId}
+              onChange={(e) => setActiveMedicineId(e.target.value)}
+              className="px-2 py-1 bg-gray-50 border border-gray-200 rounded text-xs font-semibold text-gray-900"
+            >
+              {medicines.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name} ({m.strength})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex items-center gap-1.5 text-xs text-gray-600">
+            <span>Radius:</span>
+            <select
+              value={searchRadius}
+              onChange={(e) => {
+                const r = parseFloat(e.target.value);
+                setSearchRadius(r);
+                fetchPharmaciesAtLocation(userLocation.lat, userLocation.lng, r);
+              }}
+              className="px-2 py-1 bg-gray-50 border border-gray-200 rounded text-xs font-semibold text-gray-900"
+            >
+              <option value="2.0">2 km</option>
+              <option value="5.0">5 km</option>
+              <option value="10.0">10 km</option>
+            </select>
+          </div>
         </div>
       </div>
 
-      {/* Map Display Card & Selected Details */}
+      {/* Main Map + Store Panel Split */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Vector SVG Map Container */}
+        {/* Leaflet Real Interactive Map */}
         <div className="lg:col-span-8 bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm relative">
           <div
-            className="w-full relative bg-slate-100 overflow-hidden"
-            style={{ height: "450px" }}
-          >
-            {/* SVG Graphics Canvas */}
-            <div
-              className="w-full h-full transition-transform duration-200"
-              style={{ transform: `scale(${zoomLevel})`, transformOrigin: "50% 50%" }}
-            >
-              <svg className="w-full h-full" viewBox="0 0 1000 700" preserveAspectRatio="none">
-                <defs>
-                  <pattern id="mapGrid" width="40" height="40" patternUnits="userSpaceOnUse">
-                    <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#e2e8f0" strokeWidth="1" />
-                  </pattern>
-                </defs>
+            ref={mapContainerRef}
+            className="w-full relative z-10"
+            style={{ height: "540px" }}
+          />
 
-                <rect width="1000" height="700" fill="#f8fafc" />
-                <rect width="1000" height="700" fill="url(#mapGrid)" />
-
-                {/* Parks */}
-                <path d="M 60,60 Q 180,40 220,150 T 100,280 Z" fill="#d1fae5" stroke="#a7f3d0" strokeWidth="2" />
-                <text x="100" y="150" fill="#047857" fontSize="12" fontWeight="600">Defense Colony Park</text>
-
-                <path d="M 680,180 Q 860,140 900,320 T 720,440 Z" fill="#d1fae5" stroke="#a7f3d0" strokeWidth="2" />
-                <text x="740" y="270" fill="#047857" fontSize="12" fontWeight="600">HAL Heritage Enclave</text>
-
-                {/* Main CMH Road */}
-                <path d="M 0,350 L 1000,350" stroke="#ffffff" strokeWidth="24" />
-                <path d="M 0,350 L 1000,350" stroke="#cbd5e1" strokeWidth="20" />
-                <path d="M 0,350 L 1000,350" stroke="#ffffff" strokeWidth="2" strokeDasharray="14 10" />
-                <text x="50" y="342" fill="#475569" fontSize="11" fontWeight="700" letterSpacing="1">
-                  CMH ROAD
-                </text>
-
-                {/* 100 Feet Road */}
-                <path d="M 460,0 L 460,700" stroke="#ffffff" strokeWidth="28" />
-                <path d="M 460,0 L 460,700" stroke="#cbd5e1" strokeWidth="24" />
-                <path d="M 460,0 L 460,700" stroke="#ffffff" strokeWidth="2" strokeDasharray="16 12" />
-                <text x="475" y="60" fill="#475569" fontSize="11" fontWeight="700" letterSpacing="1">
-                  100 FEET ROAD (HAL 2ND STAGE)
-                </text>
-
-                {/* 12th Main Road */}
-                <path d="M 120,680 L 920,40" stroke="#ffffff" strokeWidth="16" />
-                <path d="M 120,680 L 920,40" stroke="#e2e8f0" strokeWidth="12" />
-                <text x="260" y="550" fill="#64748b" fontSize="11" fontWeight="600">12th Main Road</text>
-
-                {/* Metro Line */}
-                <path d="M 0,325 L 1000,325" stroke="#8b5cf6" strokeWidth="3" strokeDasharray="8 6" opacity="0.6" />
-                <circle cx="460" cy="325" r="6" fill="#8b5cf6" stroke="#fff" strokeWidth="2" />
-                <text x="475" y="322" fill="#7c3aed" fontSize="10" fontWeight="700">Indiranagar Metro</text>
-              </svg>
-
-              {/* User GPS Pin */}
-              <div
-                className="absolute z-20 flex flex-col items-center pointer-events-none transform -translate-x-1/2 -translate-y-1/2"
-                style={{ left: "46%", top: "48%" }}
-              >
-                <div className="w-3.5 h-3.5 rounded-full bg-blue-600 ring-4 ring-blue-200"></div>
-                <span className="text-[10px] font-bold text-blue-800 bg-white/90 px-1.5 py-0.5 rounded shadow-xs mt-1 border border-blue-200">
-                  You are here
-                </span>
-              </div>
-
-              {/* Interactive Pharmacy Pins */}
-              {filteredPharmacies.map((pharmacy) => {
-                const isSelected = selectedPharmacy?.id === pharmacy.id;
-                const price = Object.values(pharmacy.inventory)[0]?.price || 35;
-
-                return (
-                  <button
-                    key={pharmacy.id}
-                    type="button"
-                    onClick={() => setSelectedPharmacy(pharmacy)}
-                    className={`absolute z-30 transform -translate-x-1/2 -translate-y-1/2 cursor-pointer transition-transform hover:scale-110 flex flex-col items-center ${
-                      isSelected ? "scale-110 z-40" : ""
-                    }`}
-                    style={{
-                      left: `${pharmacy.coordinates.x}%`,
-                      top: `${pharmacy.coordinates.y}%`
-                    }}
-                  >
-                    <div
-                      className={`px-2 py-1 rounded-md text-xs font-bold shadow-md border flex items-center gap-1 ${
-                        isSelected
-                          ? "bg-teal-600 text-white border-teal-700 ring-2 ring-teal-300"
-                          : "bg-white text-gray-800 border-gray-300 hover:border-teal-500"
-                      }`}
-                    >
-                      <MapPin size={11} className={isSelected ? "text-white" : "text-teal-600"} />
-                      <span>₹{price}</span>
-                    </div>
-                    <span className="text-[10px] font-semibold text-gray-700 bg-white/90 px-1.5 rounded shadow-2xs mt-0.5 max-w-[120px] truncate border border-gray-200">
-                      {pharmacy.name}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Map Controls */}
-            <div className="absolute top-3 right-3 z-30 flex flex-col gap-1 bg-white border border-gray-200 rounded-lg shadow-sm p-1">
-              <button
-                type="button"
-                onClick={() => setZoomLevel((z) => Math.min(1.4, z + 0.15))}
-                className="p-1.5 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded"
-                title="Zoom In"
-              >
-                <ZoomIn size={16} />
-              </button>
-              <button
-                type="button"
-                onClick={() => setZoomLevel((z) => Math.max(0.85, z - 0.15))}
-                className="p-1.5 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded"
-                title="Zoom Out"
-              >
-                <ZoomOut size={16} />
-              </button>
-              <button
-                type="button"
-                onClick={handleRecenter}
-                className="p-1.5 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded border-t border-gray-100"
-                title="Re-center"
-              >
-                <LocateFixed size={16} />
-              </button>
-            </div>
+          {/* Map Overlay Indicator */}
+          <div className="absolute top-3 left-3 z-20 bg-white/90 backdrop-blur-xs border border-gray-200 px-3 py-1.5 rounded-lg shadow-sm text-xs flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-teal-500 animate-ping"></span>
+            <span className="font-semibold text-gray-800">
+              {filteredPharmacies.length} Stores Found in {searchRadius} km
+            </span>
           </div>
         </div>
 
         {/* Selected Pharmacy Detail Panel */}
-        <div className="lg:col-span-4">
+        <div className="lg:col-span-4 space-y-4">
           {selectedPharmacy ? (
             <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm space-y-4">
+              {/* Header Details */}
               <div className="flex items-start justify-between gap-3 pb-3 border-b border-gray-100">
                 <div>
-                  <div className="flex items-center gap-1.5">
-                    <h3 className="text-base font-bold text-gray-900">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <h3 className="text-base font-bold text-gray-900 leading-tight">
                       {selectedPharmacy.name}
                     </h3>
                   </div>
-                  {selectedPharmacy.verified && (
-                    <span className="inline-flex items-center gap-1 text-[11px] font-medium text-teal-700 bg-teal-50 px-2 py-0.5 rounded border border-teal-200 mt-1">
-                      <ShieldCheck size={12} /> Verified Chemist
+                  <p className="text-xs text-gray-500 leading-relaxed">
+                    {selectedPharmacy.address}
+                  </p>
+                </div>
+                {selectedPharmacy.verified && (
+                  <span className="text-[10px] font-semibold text-teal-800 bg-teal-50 px-2 py-0.5 rounded border border-teal-200 flex items-center gap-1 shrink-0">
+                    <ShieldCheck size={11} className="text-teal-600" /> Verified
+                  </span>
+                )}
+              </div>
+
+              {/* Status and Rating Badges */}
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="bg-gray-50 p-2.5 rounded-xl border border-gray-100 flex items-center gap-2">
+                  <Clock size={16} className="text-teal-600 shrink-0" />
+                  <div>
+                    <span className="text-[10px] text-gray-400 block font-medium">Timings</span>
+                    <span className="font-semibold text-gray-800 text-xs">
+                      {selectedPharmacy.openStatus}
                     </span>
-                  )}
+                  </div>
                 </div>
-                <div className="w-8 h-8 rounded-lg bg-teal-50 text-teal-700 font-bold flex items-center justify-center shrink-0">
-                  {selectedPharmacy.name[0]}
-                </div>
-              </div>
 
-              <div className="space-y-2 text-xs text-gray-600">
-                <p className="flex items-start gap-1.5">
-                  <MapPin size={14} className="text-gray-400 shrink-0 mt-0.5" />
-                  <span>{selectedPharmacy.address}</span>
-                </p>
-
-                <div className="flex items-center gap-3 pt-1">
-                  <span className="font-semibold text-teal-700 bg-teal-50 px-2 py-0.5 rounded">
-                    {selectedPharmacy.distanceText}
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <Star size={13} className="text-amber-500 fill-amber-500" />
-                    <strong>{selectedPharmacy.rating}</strong> ({selectedPharmacy.reviewsCount})
-                  </span>
-                  <span className="text-gray-500">
-                    <Clock size={12} className="inline mr-1" />
-                    {selectedPharmacy.openStatus}
-                  </span>
+                <div className="bg-gray-50 p-2.5 rounded-xl border border-gray-100 flex items-center gap-2">
+                  <Star size={16} className="text-amber-500 fill-amber-400 shrink-0" />
+                  <div>
+                    <span className="text-[10px] text-gray-400 block font-medium">Rating</span>
+                    <span className="font-semibold text-gray-800 text-xs">
+                      {selectedPharmacy.rating} ★ ({selectedPharmacy.reviewsCount} reviews)
+                    </span>
+                  </div>
                 </div>
               </div>
 
-              {/* Sample Prices */}
-              <div className="pt-2 border-t border-gray-100 space-y-1.5 text-xs">
-                <span className="text-gray-500 font-semibold block text-[11px] uppercase">
-                  Sample Stock & Prices:
+              {/* Distance from User GPS */}
+              <div className="flex items-center justify-between text-xs px-3 py-2 bg-teal-50/60 rounded-xl border border-teal-100">
+                <span className="text-teal-800 font-medium flex items-center gap-1">
+                  <Navigation size={13} className="text-teal-600" /> Real-time Proximity
                 </span>
-                <div className="space-y-1">
-                  {Object.entries(selectedPharmacy.inventory).slice(0, 3).map(([medId, stock]) => {
-                    const med = medicines.find((m) => m.id === medId);
+                <span className="font-bold text-teal-900">
+                  {selectedPharmacy.distanceText || `${selectedPharmacy.distance} km away`}
+                </span>
+              </div>
+
+              {/* Live Medicine Stock at this Pharmacy */}
+              <div className="space-y-2 pt-1">
+                <h4 className="text-xs font-bold text-gray-900 uppercase tracking-wide">
+                  Live Counter Inventory
+                </h4>
+
+                <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                  {medicines.slice(0, 5).map((med) => {
+                    const stock = selectedPharmacy.inventory[med.id] || {
+                      status: "Available",
+                      price: med.basePrice,
+                      quantity: 15,
+                    };
+                    const isAvailable = stock.status !== "Out of stock";
+
                     return (
-                      <div key={medId} className="flex justify-between items-center py-1 border-b border-gray-50">
-                        <span className="text-gray-800 font-medium">{med?.name}</span>
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-gray-900">₹{stock.price}</span>
-                          <span className="text-[10px] text-emerald-700 bg-emerald-50 px-1.5 rounded">
+                      <div
+                        key={med.id}
+                        className="flex items-center justify-between p-2 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors text-xs"
+                      >
+                        <div className="min-w-0 pr-2">
+                          <span className="font-bold text-gray-900 block truncate">
+                            {med.name}
+                          </span>
+                          <span className="text-[10px] text-gray-500 block truncate">
+                            {med.strength} · {med.generic}
+                          </span>
+                        </div>
+
+                        <div className="text-right shrink-0">
+                          <span className="font-bold text-gray-900 block text-xs">
+                            ₹{stock.price}
+                          </span>
+                          <span
+                            className={`text-[10px] font-semibold ${
+                              isAvailable ? "text-emerald-600" : "text-rose-500"
+                            }`}
+                          >
                             {stock.status}
                           </span>
                         </div>
@@ -305,37 +533,77 @@ export const MapPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* Actions */}
-              <div className="pt-3 border-t border-gray-100 space-y-2">
+              {/* Action Buttons */}
+              <div className="space-y-2 pt-2 border-t border-gray-100">
                 <button
                   type="button"
                   onClick={() => handleReserve(selectedPharmacy)}
-                  className="btn-primary w-full text-xs py-2"
+                  className="btn-primary w-full py-2.5 text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm"
                 >
-                  <ShoppingBag size={14} /> Reserve at this Store
+                  <ShoppingBag size={14} /> Reserve Medicine for Counter Pickup
                 </button>
 
                 <div className="grid grid-cols-2 gap-2">
                   <a
-                    href={`tel:${selectedPharmacy.phone.replace(/[^0-9+]/g, "")}`}
-                    className="btn-outline text-xs py-1.5 justify-center"
+                    href={`https://www.google.com/maps/dir/?api=1&destination=${selectedPharmacy.lat || userLocation.lat},${selectedPharmacy.lng || userLocation.lng}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn-outline text-xs py-2 flex items-center justify-center gap-1 text-center"
                   >
-                    <Phone size={13} /> Call Chemist
+                    <ExternalLink size={12} /> Directions
                   </a>
-                  <Link
-                    to={`/search?q=${encodeURIComponent(selectedPharmacy.name)}`}
-                    className="btn-secondary text-xs py-1.5 justify-center"
+
+                  <a
+                    href={`tel:${selectedPharmacy.phone}`}
+                    className="btn-outline text-xs py-2 flex items-center justify-center gap-1 text-center"
                   >
-                    View Catalog <ArrowRight size={13} />
-                  </Link>
+                    <Phone size={12} /> Call Store
+                  </a>
                 </div>
               </div>
             </div>
           ) : (
-            <div className="bg-white border border-gray-200 rounded-2xl p-6 text-center text-xs text-gray-500">
-              Select a pharmacy pin on the map to see details and reserve medicines.
+            <div className="bg-white border border-gray-200 rounded-2xl p-8 text-center text-gray-400 space-y-2">
+              <MapPin size={32} className="mx-auto text-gray-300" />
+              <p className="text-xs">Click on any pharmacy marker on the map to see its live stock and reserve.</p>
             </div>
           )}
+
+          {/* Quick List of all nearby stores */}
+          <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm space-y-2">
+            <h4 className="text-xs font-bold text-gray-900 uppercase tracking-wide">
+              Nearby Stores Directory ({filteredPharmacies.length})
+            </h4>
+            <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+              {filteredPharmacies.map((p) => {
+                const isSelected = selectedPharmacy?.id === p.id;
+                return (
+                  <div
+                    key={p.id}
+                    onClick={() => {
+                      setSelectedPharmacy(p);
+                      if (mapInstanceRef.current && p.lat && p.lng) {
+                        mapInstanceRef.current.panTo([p.lat, p.lng]);
+                      }
+                    }}
+                    className={`p-2.5 rounded-xl border text-xs cursor-pointer transition-colors ${
+                      isSelected
+                        ? "border-teal-500 bg-teal-50/50"
+                        : "border-gray-200 hover:border-gray-300 bg-white"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-gray-900 truncate">{p.name}</span>
+                      <span className="text-teal-700 font-semibold text-[11px] shrink-0">
+                        {p.distanceText || `${p.distance} km`}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-gray-500 truncate mt-0.5">{p.address}</p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
       </div>
     </main>

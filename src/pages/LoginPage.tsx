@@ -85,7 +85,7 @@ export const LoginPage: React.FC = () => {
             +
           </div>
           <h1 className="text-2xl font-bold text-gray-900">
-            Sign In to MedStack
+            Sign In to MedStash
           </h1>
           <p className="text-xs text-gray-500">
             Choose your role to access the patient or chemist dashboard.

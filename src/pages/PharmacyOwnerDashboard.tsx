@@ -19,18 +19,21 @@ import {
   ExternalLink
 } from "lucide-react";
 import { useApp, Reservation } from "../context/AppContext";
-import { medicines, Medicine, PharmacyStock, Pharmacy } from "../data/mockData";
+import { Medicine, PharmacyStock, Pharmacy } from "../data/mockData";
 
 export const PharmacyOwnerDashboard: React.FC = () => {
   const {
     currentUser,
+    medicines,
     pharmacies,
     reservations,
     updatePharmacyStock,
     addMedicineToPharmacy,
+    addMedicine,
     completeReservation,
     cancelReservation,
     createReservation,
+    verifyCode,
     addToast
   } = useApp();
 
@@ -51,7 +54,13 @@ export const PharmacyOwnerDashboard: React.FC = () => {
 
   // Add Medicine Modal
   const [isAddModalOpen, setIsAddModalOpen] = useState<boolean>(false);
+  const [modalMode, setModalMode] = useState<"directory" | "new">("directory");
   const [selectedMedToAdd, setSelectedMedToAdd] = useState<string>("");
+  const [customMedName, setCustomMedName] = useState<string>("");
+  const [customMedGeneric, setCustomMedGeneric] = useState<string>("");
+  const [customMedStrength, setCustomMedStrength] = useState<string>("500 mg");
+  const [customMedCategory, setCustomMedCategory] = useState<"Pain relief" | "Antibiotic" | "Allergy" | "Cold & flu" | "Digestive">("Pain relief");
+  const [customMedRx, setCustomMedRx] = useState<boolean>(false);
   const [addQuantity, setAddQuantity] = useState<number>(25);
   const [addPrice, setAddPrice] = useState<number>(40);
   const [addStatus, setAddStatus] = useState<"Available" | "Low stock">("Available");
@@ -97,10 +106,11 @@ export const PharmacyOwnerDashboard: React.FC = () => {
   ).length;
   const pendingValue = pendingReservations.reduce((sum, r) => sum + r.totalPrice, 0);
 
-  const handleVerifyCode = (e: React.FormEvent) => {
+  const handleVerifyCode = async (e: React.FormEvent) => {
     e.preventDefault();
     const clean = verifyCodeInput.trim().toUpperCase();
-    const found = reservations.find((r) => r.code.toUpperCase() === clean);
+    if (!clean) return;
+    const found = await verifyCode(clean);
     if (found) {
       setVerifiedReservation(found);
       addToast("Pass Verified", `Matched patient: ${found.patientName} (${found.medicineName})`, "success");
@@ -110,18 +120,41 @@ export const PharmacyOwnerDashboard: React.FC = () => {
     }
   };
 
-  const handleAddMedicineSubmit = (e: React.FormEvent) => {
+  const handleAddMedicineSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedMedToAdd) return;
-    addMedicineToPharmacy(pharmacy.id, selectedMedToAdd, {
-      price: addPrice,
-      quantity: addQuantity,
-      status: addStatus,
-      lastUpdated: "Just now"
-    });
-    setIsAddModalOpen(false);
-    setSelectedMedToAdd("");
-    addToast("Medicine Added", "Added item to store catalog", "success");
+    if (modalMode === "directory") {
+      if (!selectedMedToAdd) return;
+      addMedicineToPharmacy(pharmacy.id, selectedMedToAdd, {
+        price: addPrice,
+        quantity: addQuantity,
+        status: addStatus,
+        lastUpdated: "Just now"
+      });
+      setIsAddModalOpen(false);
+      setSelectedMedToAdd("");
+      addToast("Medicine Added", "Added item to store catalog", "success");
+    } else {
+      if (!customMedName.trim() || !customMedGeneric.trim()) return;
+      const created = await addMedicine({
+        name: customMedName.trim(),
+        generic: customMedGeneric.trim(),
+        strength: customMedStrength,
+        category: customMedCategory,
+        form: "Tablet",
+        basePrice: addPrice,
+        prescriptionRequired: customMedRx
+      });
+      addMedicineToPharmacy(pharmacy.id, created.id, {
+        price: addPrice,
+        quantity: addQuantity,
+        status: addQuantity > 5 ? "Available" : "Low stock",
+        lastUpdated: "Just now"
+      });
+      setIsAddModalOpen(false);
+      setCustomMedName("");
+      setCustomMedGeneric("");
+      addToast("New Medicine Created", `${created.name} added to global catalog & store!`, "success");
+    }
   };
 
   const handleWalkinSubmit = (e: React.FormEvent) => {
@@ -732,29 +765,116 @@ export const PharmacyOwnerDashboard: React.FC = () => {
               </p>
             </div>
 
+            {/* Mode Switcher */}
+            <div className="flex rounded-lg bg-gray-100 p-1 text-xs">
+              <button
+                type="button"
+                onClick={() => setModalMode("directory")}
+                className={`flex-1 py-1.5 font-medium rounded-md transition-colors ${
+                  modalMode === "directory" ? "bg-white text-teal-700 shadow-sm font-semibold" : "text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                Choose from Directory
+              </button>
+              <button
+                type="button"
+                onClick={() => setModalMode("new")}
+                className={`flex-1 py-1.5 font-medium rounded-md transition-colors ${
+                  modalMode === "new" ? "bg-white text-teal-700 shadow-sm font-semibold" : "text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                + Create Brand New
+              </button>
+            </div>
+
             <form onSubmit={handleAddMedicineSubmit} className="space-y-4 text-xs">
-              <div>
-                <label className="block font-medium text-gray-700 mb-1">
-                  Select Medicine from Directory
-                </label>
-                <select
-                  required
-                  value={selectedMedToAdd}
-                  onChange={(e) => {
-                    setSelectedMedToAdd(e.target.value);
-                    const found = medicines.find((m) => m.id === e.target.value);
-                    if (found) setAddPrice(found.basePrice);
-                  }}
-                  className="med-select py-2 text-xs"
-                >
-                  <option value="">-- Choose a medicine --</option>
-                  {medicines.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name} ({m.generic}, {m.strength})
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {modalMode === "directory" ? (
+                <div>
+                  <label className="block font-medium text-gray-700 mb-1">
+                    Select Medicine from Directory
+                  </label>
+                  <select
+                    required={modalMode === "directory"}
+                    value={selectedMedToAdd}
+                    onChange={(e) => {
+                      setSelectedMedToAdd(e.target.value);
+                      const found = medicines.find((m) => m.id === e.target.value);
+                      if (found) setAddPrice(found.basePrice);
+                    }}
+                    className="med-select py-2 text-xs"
+                  >
+                    <option value="">-- Choose a medicine --</option>
+                    {medicines.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name} ({m.generic}, {m.strength})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div>
+                    <label className="block font-medium text-gray-700 mb-1">Medicine Brand Name</label>
+                    <input
+                      type="text"
+                      required={modalMode === "new"}
+                      placeholder="e.g. Paracetamol 500, Shelcal 500"
+                      value={customMedName}
+                      onChange={(e) => setCustomMedName(e.target.value)}
+                      className="med-input py-2 text-xs"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-medium text-gray-700 mb-1">Generic / Salt Formula</label>
+                    <input
+                      type="text"
+                      required={modalMode === "new"}
+                      placeholder="e.g. Calcium Carbonate with Vitamin D3"
+                      value={customMedGeneric}
+                      onChange={(e) => setCustomMedGeneric(e.target.value)}
+                      className="med-input py-2 text-xs"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block font-medium text-gray-700 mb-1">Strength</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. 500 mg, 10 ml"
+                        value={customMedStrength}
+                        onChange={(e) => setCustomMedStrength(e.target.value)}
+                        className="med-input py-2 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-gray-700 mb-1">Category</label>
+                      <select
+                        value={customMedCategory}
+                        onChange={(e) => setCustomMedCategory(e.target.value as any)}
+                        className="med-select py-2 text-xs"
+                      >
+                        <option value="Pain relief">Pain relief</option>
+                        <option value="Antibiotic">Antibiotic</option>
+                        <option value="Allergy">Allergy</option>
+                        <option value="Cold & flu">Cold & flu</option>
+                        <option value="Digestive">Digestive</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer pt-1">
+                    <input
+                      type="checkbox"
+                      checked={customMedRx}
+                      onChange={(e) => setCustomMedRx(e.target.checked)}
+                      className="rounded text-teal-600 focus:ring-teal-500"
+                    />
+                    Requires Doctor's Prescription (Rx)
+                  </label>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -802,10 +922,10 @@ export const PharmacyOwnerDashboard: React.FC = () => {
 
               <button
                 type="submit"
-                disabled={!selectedMedToAdd}
-                className="btn-primary w-full py-2.5 text-xs font-semibold"
+                disabled={modalMode === "directory" ? !selectedMedToAdd : !customMedName.trim()}
+                className="btn-primary w-full py-2.5 text-xs font-semibold disabled:opacity-50"
               >
-                Add to Store Inventory
+                {modalMode === "directory" ? "Add to Store Inventory" : "Create & Add to Store"}
               </button>
             </form>
           </div>

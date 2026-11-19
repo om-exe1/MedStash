@@ -6,24 +6,36 @@ import {
   Pill,
   Heart,
   ArrowRight,
-  AlertCircle
+  AlertCircle,
+  MapPin,
+  LocateFixed
 } from "lucide-react";
 import { SearchBox } from "../components/SearchBox";
 import { PharmacyCard } from "../components/PharmacyCard";
-import { medicines, Medicine, Pharmacy } from "../data/mockData";
+import { Medicine, Pharmacy } from "../data/mockData";
 import { useApp } from "../context/AppContext";
 
 export const SearchPage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { pharmacies, isMedicineSaved, toggleSaveMedicine } = useApp();
+  const {
+    medicines,
+    pharmacies,
+    isMedicineSaved,
+    toggleSaveMedicine,
+    addToast,
+    userLocation,
+    locationName,
+    isLocating,
+    detectLiveLocation
+  } = useApp();
 
   const urlQuery = searchParams.get("q") || "";
   const urlCategory = searchParams.get("category") || "All";
 
   // Filter states
   const [selectedCategory, setSelectedCategory] = useState<string>(urlCategory);
-  const [maxDistance, setMaxDistance] = useState<number>(5.0);
+  const [maxDistance, setMaxDistance] = useState<number>(15.0);
   const [inStockOnly, setInStockOnly] = useState<boolean>(false);
   const [prescriptionType, setPrescriptionType] = useState<"all" | "otc" | "rx">("all");
   const [sortBy, setSortBy] = useState<"best" | "price" | "distance" | "rating">("best");
@@ -33,7 +45,20 @@ export const SearchPage: React.FC = () => {
     setSelectedCategory(urlCategory);
   }, [urlCategory]);
 
-  const categories = ["All", "Pain relief", "Antibiotic", "Allergy", "Cold & flu", "Digestive"];
+  const categories = [
+    "All",
+    "Rare & Orphan",
+    "Pain relief",
+    "Antibiotic",
+    "Allergy",
+    "Cardiac",
+    "Diabetes",
+    "Oncology",
+    "Immunology",
+    "Neurology",
+    "Respiratory",
+    "Digestive"
+  ];
 
   const handleCategorySelect = (cat: string) => {
     setSelectedCategory(cat);
@@ -84,10 +109,35 @@ export const SearchPage: React.FC = () => {
 
   const currentMedicine = medicines.find((m) => m.id === focusedMedicineId) || filteredMedicines[0] || medicines[0];
 
+  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 6371;
+    const dLat = ((lat2 - lat1) * Math.PI) / 180;
+    const dLon = ((lon2 - lon1) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos((lat1 * Math.PI) / 180) *
+        Math.cos((lat2 * Math.PI) / 180) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return Math.round(R * c * 10) / 10;
+  };
+
   // Matching pharmacies offering this medicine
   const matchingPharmacies = useMemo(() => {
     if (!currentMedicine) return [];
     return pharmacies
+      .map((p) => {
+        const computedDist =
+          p.lat && p.lng && userLocation
+            ? calculateDistance(userLocation.lat, userLocation.lng, p.lat, p.lng)
+            : p.distance;
+        return {
+          ...p,
+          distance: computedDist,
+          distanceText: `${computedDist} km away`
+        };
+      })
       .filter((p) => {
         if (p.distance > maxDistance) return false;
         if (inStockOnly) {
@@ -104,15 +154,19 @@ export const SearchPage: React.FC = () => {
         if (sortBy === "rating") return b.rating - a.rating;
         return a.distance - b.distance;
       });
-  }, [maxDistance, inStockOnly, sortBy, currentMedicine, pharmacies]);
+  }, [maxDistance, inStockOnly, sortBy, currentMedicine, pharmacies, userLocation]);
 
   const handleResetFilters = () => {
     setSelectedCategory("All");
-    setMaxDistance(5.0);
+    setMaxDistance(15.0);
     setInStockOnly(false);
     setPrescriptionType("all");
     setSortBy("best");
     setSearchParams(new URLSearchParams());
+    if (filteredMedicines.length > 0) {
+      setFocusedMedicineId(filteredMedicines[0].id);
+    }
+    addToast("Filters Reset", "Search distance set to 15 km, showing all available medicines.", "info");
   };
 
   return (
@@ -185,12 +239,12 @@ export const SearchPage: React.FC = () => {
           <div>
             <div className="flex justify-between text-xs font-semibold text-gray-700 mb-1.5">
               <span>Max Distance</span>
-              <span className="text-teal-700">{maxDistance} km</span>
+              <span className="text-teal-700 font-bold">{maxDistance} km</span>
             </div>
             <input
               type="range"
               min="0.5"
-              max="5.0"
+              max="25.0"
               step="0.5"
               value={maxDistance}
               onChange={(e) => setMaxDistance(parseFloat(e.target.value))}
@@ -198,7 +252,8 @@ export const SearchPage: React.FC = () => {
             />
             <div className="flex justify-between text-[11px] text-gray-400 mt-1">
               <span>0.5 km</span>
-              <span>5 km</span>
+              <span>10 km</span>
+              <span>25 km</span>
             </div>
           </div>
 
@@ -380,21 +435,35 @@ export const SearchPage: React.FC = () => {
                 </div>
 
                 {matchingPharmacies.length === 0 ? (
-                  <div className="bg-white border border-gray-200 rounded-xl p-6 text-center space-y-2 text-xs">
-                    <AlertCircle size={20} className="text-amber-500 mx-auto" />
-                    <p className="text-gray-700 font-medium">
-                      No pharmacies in your {maxDistance} km search radius have this medicine with current filters.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setMaxDistance(5.0);
-                        setInStockOnly(false);
-                      }}
-                      className="text-teal-700 font-semibold hover:underline"
-                    >
-                      Expand search radius to 5 km & show all stock
-                    </button>
+                  <div className="bg-white border border-gray-200 rounded-xl p-8 text-center space-y-3 text-xs">
+                    <AlertCircle size={26} className="text-amber-500 mx-auto" />
+                    <div>
+                      <h4 className="text-sm font-bold text-gray-900">No Stores Found Within {maxDistance} km</h4>
+                      <p className="text-gray-500 mt-1 max-w-md mx-auto">
+                        No pharmacies around <strong>{locationName}</strong> currently match these filters.
+                      </p>
+                    </div>
+                    <div className="flex items-center justify-center gap-2 pt-2 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={handleResetFilters}
+                        className="btn-primary btn-sm inline-flex items-center gap-1.5"
+                      >
+                        <RotateCcw size={13} /> Reset Filters & Expand to 15 km
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => detectLiveLocation(true)}
+                        disabled={isLocating}
+                        className="btn-secondary btn-sm inline-flex items-center gap-1.5"
+                      >
+                        <LocateFixed size={13} className={isLocating ? "animate-spin" : ""} />
+                        {isLocating ? "Locating..." : "Detect Live GPS"}
+                      </button>
+                      <Link to="/map" className="btn-outline btn-sm inline-flex items-center gap-1.5">
+                        <MapPin size={13} /> View on Map
+                      </Link>
+                    </div>
                   </div>
                 ) : (
                   <div className="space-y-3">

@@ -33,7 +33,7 @@ function Footer() {
                 +
               </div>
               <span className="font-bold text-lg text-gray-900 tracking-tight">
-                Med<span className="text-teal-600">Stack</span>
+                Med<span className="text-teal-600">Stash</span>
               </span>
             </div>
             <p className="text-gray-500 max-w-sm text-xs sm:text-sm leading-relaxed">
@@ -81,7 +81,7 @@ function Footer() {
         </div>
 
         <div className="border-t border-gray-100 mt-8 pt-6 flex flex-col sm:flex-row items-center justify-between text-xs text-gray-400 gap-2">
-          <span>&copy; {new Date().getFullYear()} MedStack. Developed for College Viva & Project Presentation.</span>
+          <span>&copy; {new Date().getFullYear()} MedStash. Developed for College Viva & Project Presentation.</span>
           <span>Built with React, TypeScript & Tailwind CSS</span>
         </div>
       </div>
